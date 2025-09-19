@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-共通ユーティリティ関数（ALS版 / クリーン版）
+共通ユーティリティ関数
 """
 
 from pathlib import Path
@@ -299,4 +299,108 @@ def process_spectrum_file(
             pre_wavenum = df_t.index.to_numpy(dtype=float)
             pre_spectra = df_t["intensity"].to_numpy(dtype=float)
 
-        elif
+        elif file_type == "ramaneye_old":
+            pre_wavenum = np.array(data["WaveNumber"].values, dtype=float)
+            pre_spectra = np.array(data.iloc[:, -1].values, dtype=float)
+
+        elif file_type == "ramaneye_new":
+            sep = ',' if file_extension == 'csv' else '\t'
+            safe_seek(uploaded_file)
+            text = uploaded_file.read()
+            safe_seek(uploaded_file)
+            lines = text.splitlines()
+
+            header_idx = None
+            for i, line in enumerate(lines[:200]):
+                cols = line.split(sep)
+                if any(c.strip() == "WaveNumber" for c in cols):
+                    header_idx = i
+                    break
+
+            if header_idx is None:
+                safe_seek(uploaded_file)
+                data2 = pd.read_csv(uploaded_file, sep=sep, header=9, engine="python")
+            else:
+                safe_seek(uploaded_file)
+                data2 = pd.read_csv(uploaded_file, sep=sep, header=header_idx, engine="python")
+
+            if "WaveNumber" not in data2.columns:
+                return None, None, None, None, None, original_file_name
+
+            pre_wavenum = np.array(data2["WaveNumber"].values, dtype=float)
+            pre_spectra = np.array(data2.iloc[:, -1].values, dtype=float)
+
+        elif file_type == "eagle":
+            data_t = data.transpose()
+            header = data_t.iloc[:3]
+            reversed_data = data_t.iloc[3:].iloc[::-1]
+            data_t = pd.concat([header, reversed_data], ignore_index=True)
+            pre_wavenum = np.array(data_t.iloc[3:, 0], dtype=float)
+            pre_spectra = np.array(data_t.iloc[3:, 1], dtype=float)
+
+        else:
+            return None, None, None, None, None, original_file_name
+
+        # 空チェック
+        if pre_wavenum.size == 0 or pre_spectra.size == 0:
+            return None, None, None, None, None, original_file_name
+
+        # 昇順に
+        if pre_wavenum.size > 1 and pre_wavenum[0] >= pre_wavenum[1]:
+            pre_wavenum = pre_wavenum[::-1]
+            pre_spectra = pre_spectra[::-1]
+
+        # ===== 範囲切り出し =====
+        start_index = find_index(pre_wavenum, start_wavenum)
+        end_index   = find_index(pre_wavenum, end_wavenum)
+        if end_index < start_index:
+            start_index, end_index = end_index, start_index
+
+        wavenum = np.array(pre_wavenum[start_index:end_index+1], dtype=float)
+        spectra = np.array(pre_spectra[start_index:end_index+1], dtype=float)
+
+        # ===== スパイク除去 → 移動平均（medfilt） =====
+        if savgol_wsize % 2 == 0:
+            savgol_wsize += 1  # medfiltは奇数長が必要
+        spectra_spikerm = remove_outliers_and_interpolate(spectra)
+        mveAve_spectra  = signal.medfilt(spectra_spikerm, savgol_wsize)
+
+        # ===== ベースライン推定（ALS、必要なら事前に最小値を1へ） =====
+        if prelift_to_one:
+            mveAve_spectra, offset = lift_min_to_one(mveAve_spectra)
+            spectra_spikerm = spectra_spikerm + offset
+
+        baseline = asymmetric_least_squares(mveAve_spectra, lam=dssn_th*100000000000, p=0.1, niter=10, differences=2)
+
+        # ===== ベースライン除去（負値を持ち上げた版も用意） =====
+        BSremoval_spectra     = spectra_spikerm - baseline
+        BSremoval_spectra_pos = BSremoval_spectra + abs(np.minimum(BSremoval_spectra, 0))
+
+        Averemoval_spectra     = mveAve_spectra - baseline
+        Averemoval_spectra_pos = Averemoval_spectra + abs(np.minimum(Averemoval_spectra, 0))
+
+        return wavenum, spectra, BSremoval_spectra_pos, Averemoval_spectra_pos, file_type, original_file_name
+
+    except Exception:
+        return None, None, None, None, None, original_file_name
+
+
+def process_spectrum_file_from_path(
+    file_path: str,
+    start_wavenum,
+    end_wavenum,
+    dssn_th,
+    savgol_wsize,
+    prelift_to_one: bool = True,
+):
+    """ファイルパス→bytes→共通処理に回すラッパー"""
+    try:
+        p = Path(file_path)
+        with open(p, 'rb') as f:
+            data = f.read()
+        return process_spectrum_file(
+            data, start_wavenum, end_wavenum, dssn_th, savgol_wsize,
+            prelift_to_one=prelift_to_one, file_name=p.name
+        )
+    except Exception:
+        return None, None, None, None, None, None

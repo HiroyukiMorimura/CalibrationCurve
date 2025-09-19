@@ -12,6 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import io
+import os
 
 # ページ設定：横幅いっぱいに表示
 st.sidebar.markdown("### 設定")

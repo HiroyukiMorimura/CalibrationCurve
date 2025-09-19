@@ -245,68 +245,61 @@ def calculate_peak_width(spectrum, peak_idx, wavenum):
 # ファイル読込のバリエーション
 # =============================================================================
 
+# try_read_wasatch_file を強化＆ログ（差し替え）
 def try_read_wasatch_file(uploaded_file, skiprows_list=None):
-    """
-    Wasatchファイルを複数の skiprows で試行読み込み（列名ゆらぎにも対応）
-    戻り: (DataFrame, 使用した skiprows) / (None, None)
-    """
     if skiprows_list is None:
-        # ENLIGHTEN のヘッダ長は機種や設定で前後することがある
         skiprows_list = [44, 45, 46, 47, 48, 49, 50, 52]
-
     wavelength_candidates = ["Wavelength", "Wavelength (nm)", "wavelength", "wavelength (nm)"]
 
     for skiprows in skiprows_list:
         try:
             safe_seek(uploaded_file)
+            _dbg(f"[try_read_wasatch_file] try skiprows={skiprows}")
             try:
                 df = pd.read_csv(uploaded_file, skiprows=skiprows, engine="python")
             except UnicodeDecodeError:
                 safe_seek(uploaded_file)
                 df = pd.read_csv(uploaded_file, skiprows=skiprows, encoding="shift-jis", engine="python")
+            _dbg(f"[try_read_wasatch_file] columns={list(df.columns)[:8]} rows={len(df)}")
 
-            # 波長列の特定
             wl_col = None
             for c in df.columns:
                 cn = str(c).strip()
-                if cn in wavelength_candidates:
+                if cn in wavelength_candidates or "wavelength" in cn.lower():
                     wl_col = c
                     break
             if wl_col is None:
-                # 大文字小文字や空白に更に寛容に
-                for c in df.columns:
-                    if "wavelength" in str(c).lower():
-                        wl_col = c
-                        break
-            if wl_col is None:
-                continue  # 次の skiprows へ
+                _dbg("[try_read_wasatch_file] wavelength column not found -> continue")
+                continue
 
-            # スペクトル列の特定
-            # "Processed" 系を最優先、それが無ければ Wavelength 以外の数値列の最後を採用
-            spec_col = None
             processed_like = [c for c in df.columns if str(c).lower().startswith("processed")]
-            if len(processed_like) > 0:
+            if processed_like:
                 spec_col = processed_like[-1]
             else:
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
                 numeric_cols = [c for c in numeric_cols if str(c) != str(wl_col)]
-                if len(numeric_cols) >= 1:
-                    spec_col = numeric_cols[-1]
-                else:
-                    # 数値型推定が効かない場合、Wavelength 以外から末尾列を候補に
-                    others = [c for c in df.columns if str(c) != str(wl_col)]
-                    if len(others) >= 1:
-                        spec_col = others[-1]
+                spec_col = numeric_cols[-1] if numeric_cols else None
 
+            _dbg(f"[try_read_wasatch_file] wl_col={wl_col}, spec_col={spec_col}")
             if wl_col is None or spec_col is None:
                 continue
 
-            # 最低限の整合チェック
-            if df[wl_col].shape[0] >= 5 and df[spec_col].shape[0] >= 5:
-                return df[[wl_col, spec_col]].rename(columns={wl_col: "Wavelength", spec_col: "Processed"}), skiprows
-        except Exception:
+            # サンプルの数値化で NaN 率をみる
+            wl_s = pd.to_numeric(df[wl_col], errors="coerce")
+            sp_s = pd.to_numeric(df[spec_col], errors="coerce")
+            nan_wl = int(wl_s.isna().sum())
+            nan_sp = int(sp_s.isna().sum())
+            _dbg(f"[try_read_wasatch_file] NaN: wavelength={nan_wl}, spectra={nan_sp}")
+
+            if wl_s.notna().sum() >= 5 and sp_s.notna().sum() >= 5:
+                out = pd.DataFrame({"Wavelength": wl_s, "Processed": sp_s})
+                _dbg("[try_read_wasatch_file] SUCCESS")
+                return out, skiprows
+        except Exception as e:
+            _dbg(f"[try_read_wasatch_file] exception: {repr(e)}")
             continue
 
+    _dbg("[try_read_wasatch_file] FAILED all candidates")
     return None, None
 
 
@@ -333,6 +326,7 @@ def process_spectrum_file(
     """
     original_file_name = get_file_name(uploaded_file, file_name)
     file_extension = original_file_name.split('.')[-1].lower() if '.' in original_file_name else ''
+    _dbg(f"\n=== process_spectrum_file: '{original_file_name}' ===")
 
     if uploaded_file is None:
         return None, None, None, None, None, original_file_name
@@ -360,10 +354,13 @@ def process_spectrum_file(
     # 一次読込
     data = read_csv_file(uploaded_file, file_extension)
     if data is None:
+        _dbg("[process] read_csv_file -> None")
         return None, None, None, None, None, original_file_name
 
     # タイプ判定
     file_type = detect_file_type(data)
+    _dbg(f"[process] detected file_type='{file_type}'")
+
     safe_seek(uploaded_file)
     if file_type == "unknown":
         return None, None, None, None, None, original_file_name

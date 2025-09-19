@@ -206,7 +206,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
             end_wavenum = st.number_input("波数（終了）を入力してください:", value=2000, min_value=start_wavenum + 1, max_value=4000)
             dssn_th = st.number_input("ベースラインパラメーターを入力してください:", value=1000, min_value=1, max_value=10000) / 1e7
             savgol_wsize = st.number_input("移動平均のウィンドウサイズを入力してください:", value=5, min_value=3, max_value=101, step=2)
-
+            debug_mode = st.checkbox("デバッグモード", value=False)  # 追加
         processed_files = analyzer.process_spectra_files(
             uploaded_files, start_wavenum, end_wavenum, dssn_th, savgol_wsize
         )

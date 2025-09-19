@@ -567,8 +567,9 @@ def spectrum_analysis_tab():
 
                 # エクスポート（分析タブ）
                 st.subheader("結果エクスポート")
+                base_name = os.path.splitext(file_name)[0]
                 df_out = pd.DataFrame({
-                    'ファイル名': [file_name],
+                    'ファイル名': [base_name],
                     '予測濃度': [concentration],
                     '高さ①': [h1],
                     '高さ②': [h2],
@@ -590,7 +591,7 @@ def spectrum_analysis_tab():
                 st.download_button(
                     label="分析結果をCSVでダウンロード",
                     data=csv_buffer.getvalue(),
-                    file_name=f"analysis_result_{file_name}.csv",
+                    file_name=f"analysis_result_{base_name}.csv",
                     mime="text/csv",
                 )
 
@@ -686,14 +687,16 @@ def time_series_tab():
 
     # 各ファイルごとに可視化
     for up in uploaded_files:
+        
         parsed = parse_timeseries(up)
         if parsed is None:
             st.error(f"{up.name} を時系列として解釈できませんでした。対応形式（Wasatch/RamanEye）をご利用ください。")
             continue
         file_name, wn, mat, labels = parsed
+        base_name = os.path.splitext(file_name)[0]
 
         # スペクトル時系列（Heatmap）
-        st.subheader(f"時系列スペクトル: {file_name}")
+        st.subheader(f"時系列スペクトル: {base_name}")
         fig_hm = go.Figure(data=go.Heatmap(z=mat.T, x=wn, y=list(range(mat.shape[1])), colorbar=dict(title='Intensity')))
         fig_hm.update_layout(xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Index (time)')
         st.plotly_chart(fig_hm, use_container_width=True)
@@ -734,7 +737,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（①・②の強度）",
             data=csv_h.getvalue(),
-            file_name=f"{file_name}_heights.csv",
+            file_name=f"{base_name}_heights.csv",
             mime="text/csv",
         )
         
@@ -754,7 +757,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（ピーク比）",
             data=csv_r.getvalue(),
-            file_name=f"{file_name}_ratio.csv",
+            file_name=f"{base_name}_ratio.csv",
             mime="text/csv",
         )
         
@@ -780,7 +783,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（濃度換算）",
             data=csv_c.getvalue(),
-            file_name=f"{file_name}_concentration.csv",
+            file_name=f"{base_name}_concentration.csv",
             mime="text/csv",
         )
 

@@ -245,7 +245,6 @@ def calculate_peak_width(spectrum, peak_idx, wavenum):
 # ファイル読込のバリエーション
 # =============================================================================
 
-# try_read_wasatch_file を強化＆ログ（差し替え）
 def try_read_wasatch_file(uploaded_file, skiprows_list=None):
     if skiprows_list is None:
         skiprows_list = [44, 45, 46, 47, 48, 49, 50, 52]
@@ -368,45 +367,45 @@ def process_spectrum_file(
     try:
         # ===== フォーマット別読み出し =====
         if file_type == "wasatch":
-        # Wasatch: ヘッダが長いのでまずはスキップ行を探索して本体データを読む
-        data2, used_skip = try_read_wasatch_file(uploaded_file)
-        if data2 is None:
-            _dbg("[process][wasatch] try_read_wasatch_file -> None")
-            return None, None, None, None, None, original_file_name
-
-        # 発振波長（nm）は既知固定でOK（必要ならヘッダから取得に拡張）
-        lambda_ex = 785.0
-
-        # 波長→ラマンシフト(cm^-1)
-        pre_wavelength = pd.to_numeric(data2["Wavelength"], errors="coerce").to_numpy(dtype=float)
-        valid = np.isfinite(pre_wavelength)
-        if valid.sum() < 5:
-            _dbg("[process][wasatch] not enough valid wavelength values")
-            return None, None, None, None, None, original_file_name
-
-        pre_wavelength = pre_wavelength[valid]
-        wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
-
-        # スペクトル列
-        if "Processed" in data2.columns:
-            pre_spectra_full = pd.to_numeric(data2["Processed"], errors="coerce").to_numpy(dtype=float)[valid]
-        else:
-            # 数値列の最後をスペクトルとみなすフォールバック
-            numeric_cols = data2.select_dtypes(include=[np.number]).columns.tolist()
-            numeric_cols = [c for c in numeric_cols if c != "Wavelength"]
-            if not numeric_cols:
-                _dbg("[process][wasatch] no numeric spectrum-like column")
+            # Wasatch: ヘッダが長いのでまずはスキップ行を探索して本体データを読む
+            data2, used_skip = try_read_wasatch_file(uploaded_file)
+            if data2 is None:
+                _dbg("[process][wasatch] try_read_wasatch_file -> None")
                 return None, None, None, None, None, original_file_name
-            pre_spectra_full = pd.to_numeric(data2[numeric_cols[-1]], errors="coerce").to_numpy(dtype=float)[valid]
-
-        # 昇順に統一
-        if wavenum_full[0] > wavenum_full[-1]:
-            wavenum_full = wavenum_full[::-1]
-            pre_spectra_full = pre_spectra_full[::-1]
-
-        # ===== 以降は全フォーマット共通の切り出し・前処理 =====
-        pre_wavenum = wavenum_full
-        pre_spectra = pre_spectra_full
+    
+            # 発振波長（nm）は既知固定でOK（必要ならヘッダから取得に拡張）
+            lambda_ex = 785.0
+    
+            # 波長→ラマンシフト(cm^-1)
+            pre_wavelength = pd.to_numeric(data2["Wavelength"], errors="coerce").to_numpy(dtype=float)
+            valid = np.isfinite(pre_wavelength)
+            if valid.sum() < 5:
+                _dbg("[process][wasatch] not enough valid wavelength values")
+                return None, None, None, None, None, original_file_name
+    
+            pre_wavelength = pre_wavelength[valid]
+            wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
+    
+            # スペクトル列
+            if "Processed" in data2.columns:
+                pre_spectra_full = pd.to_numeric(data2["Processed"], errors="coerce").to_numpy(dtype=float)[valid]
+            else:
+                # 数値列の最後をスペクトルとみなすフォールバック
+                numeric_cols = data2.select_dtypes(include=[np.number]).columns.tolist()
+                numeric_cols = [c for c in numeric_cols if c != "Wavelength"]
+                if not numeric_cols:
+                    _dbg("[process][wasatch] no numeric spectrum-like column")
+                    return None, None, None, None, None, original_file_name
+                pre_spectra_full = pd.to_numeric(data2[numeric_cols[-1]], errors="coerce").to_numpy(dtype=float)[valid]
+    
+            # 昇順に統一
+            if wavenum_full[0] > wavenum_full[-1]:
+                wavenum_full = wavenum_full[::-1]
+                pre_spectra_full = pre_spectra_full[::-1]
+    
+            # ===== 以降は全フォーマット共通の切り出し・前処理 =====
+            pre_wavenum = wavenum_full
+            pre_spectra = pre_spectra_full
 
         elif file_type == "ramaneye_old_old":
             data_wo_ts = data.drop("Timestamp", axis=1) if "Timestamp" in data.columns else data

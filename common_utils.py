@@ -294,87 +294,62 @@ def process_spectrum_file(
     try:
         # ===== フォーマット別読み出し =====
         if file_type == "wasatch":
- def parse_timeseries(uploaded_file):
-    file_name = uploaded_file.name
-    ext = file_name.split('.')[-1] if '.' in file_name else ''
-    data = read_csv_file(uploaded_file, ext)
-    file_type = detect_file_type(data)
-    uploaded_file.seek(0)
-
-    def _time_str_to_seconds(t: str) -> float:
-        # "mm:ss.ms" → 秒（float）
-        t = t.strip()
-        # フォーマットのゆらぎに少し強く（例: 04:36.6 / 4:36.60 / 04:36,6）
-        t = t.replace(',', '.')
-        m = re.match(r'^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$', t)
-        if not m:
-            return float('nan')
-        mm = int(m.group(1))
-        ss = float(m.group(2))
-        return mm * 60.0 + ss
-
-    if file_type == "wasatch":
-        # 1) 本体データ（従来どおり）
-        try:
-            uploaded_file.seek(0)
+            # --- 本体データ（従来通り） ---
             try:
-                df = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=46)
-            except Exception:
                 uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, skiprows=46)
-        except Exception:
-            return None
-
-        lambda_ex = 785
-        pre_wavelength = np.array(df["Wavelength"].values)
-        wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
-
-        processed_cols = [c for c in df.columns if str(c).startswith("Processed")]
-        if len(processed_cols) == 0:
-            return None
-        spectra_full = df[processed_cols].to_numpy()     # 形状: (N_wavenum, N_time)
-        labels = processed_cols
-
-        # 2) ヘッダブロックから Timestamp 行（29行目=0始まりで index=28）を読む
-        uploaded_file.seek(0)
-        raw_text = uploaded_file.read()
-        lines = raw_text.splitlines()
-        if len(lines) <= 28:
-            return None  # 29行目が無い
-        timestamp_line = lines[28]
-
-        # カンマ/タブどちらも許容
-        sep = ',' if (',' in timestamp_line and '\t' not in timestamp_line) else '\t'
-        cols = [c.strip() for c in timestamp_line.split(sep) if c.strip() != '']
-        if len(cols) <= 1 or cols[0] != 'Timestamp':
-            # 'Timestamp' が先頭に無い場合は諦める
-            return None
-
-        # 最初のセル 'Timestamp' を除く時刻文字列
-        time_tokens = cols[1:]
-
-        # (29,D)＝4番目（0始まりで index=3）を基準0秒に
-        # ※ time_tokens[3] が存在しないケースはフォールバックで最初を基準に
-        base_idx = 3 if len(time_tokens) > 3 else 0
-        time_seconds_all = [_time_str_to_seconds(t) for t in time_tokens]
-        base_sec = time_seconds_all[base_idx]
-        # 0秒基準に平行移動
-        time_seconds = [ts - base_sec if pd.notna(ts) and pd.notna(base_sec) else float('nan')
-                        for ts in time_seconds_all]
-
-        # 昇順に統一
-        if wavenum_full[0] > wavenum_full[-1]:
-            wavenum_full = wavenum_full[::-1]
-            spectra_full = spectra_full[::-1, :]
-
-        # 処理範囲へ切り出し
-        s = find_index(wavenum_full, proc_start)
-        e = find_index(wavenum_full, proc_end)
-        wn = np.array(wavenum_full[s:e+1])
-        mat = np.array(spectra_full[s:e+1, :])  # (N_wavenum, N_time)
-
-        # 返却：time_seconds を時系列軸として利用
-        return file_name, wn, mat, time_seconds
+                try:
+                    df = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=46)
+                except Exception:
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, skiprows=46)
+            except Exception:
+                return None
+        
+            lambda_ex = 785
+            pre_wavelength = np.array(df["Wavelength"].values)
+            wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
+        
+            processed_cols = [c for c in df.columns if str(c).startswith("Processed")]
+            if len(processed_cols) == 0:
+                return None
+            spectra_full = df[processed_cols].to_numpy()   # (N_wavenum, N_time)
+        
+            # --- 29行目の Timestamp を読む ---
+            uploaded_file.seek(0)
+            lines = uploaded_file.read().splitlines()
+            if len(lines) <= 28:
+                return None
+            timestamp_line = lines[28]   # 29行目
+        
+            sep = ',' if (',' in timestamp_line and '\t' not in timestamp_line) else '\t'
+            tokens = [c.strip() for c in timestamp_line.split(sep) if c.strip() != '']
+            if tokens[0] != "Timestamp":
+                return None
+            time_tokens = tokens[1:]
+        
+            def _time_str_to_seconds(t: str) -> float:
+                t = t.replace(',', '.')
+                m = re.match(r'^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$', t)
+                if not m:
+                    return float('nan')
+                return int(m.group(1)) * 60.0 + float(m.group(2))
+        
+            base_idx = 3 if len(time_tokens) > 3 else 0
+            times_all = [_time_str_to_seconds(x) for x in time_tokens]
+            base_sec = times_all[base_idx]
+            time_seconds = [ts - base_sec if pd.notna(ts) else np.nan for ts in times_all]
+        
+            # --- 波数昇順に ---
+            if wavenum_full[0] > wavenum_full[-1]:
+                wavenum_full = wavenum_full[::-1]
+                spectra_full = spectra_full[::-1, :]
+        
+            s = find_index(wavenum_full, proc_start)
+            e = find_index(wavenum_full, proc_end)
+            wn = np.array(wavenum_full[s:e+1])
+            mat = np.array(spectra_full[s:e+1, :])
+        
+            return file_name, wn, mat, time_seconds
 
         elif file_type == "ramaneye_old_old":
             data_wo_ts = data.drop("Timestamp", axis=1) if "Timestamp" in data.columns else data

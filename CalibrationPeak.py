@@ -22,7 +22,7 @@ st.set_page_config(layout="wide", initial_sidebar_state='expanded')
 from common_utils import (
     detect_file_type, read_csv_file, find_index, WhittakerSmooth, 
     asymmetric_least_squares, remove_outliers_and_interpolate, process_spectrum_file,
-    get_debug_log
+    enable_debug, disable_debug, get_debug_log
 )
 
 # 日本語フォント

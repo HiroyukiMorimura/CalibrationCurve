@@ -209,24 +209,63 @@ def calculate_peak_width(spectrum, peak_idx, wavenum):
 
 def try_read_wasatch_file(uploaded_file, skiprows_list=None):
     """
-    Wasatchファイルを複数の skiprows で試行読み込み
+    Wasatchファイルを複数の skiprows で試行読み込み（列名ゆらぎにも対応）
+    戻り: (DataFrame, 使用した skiprows) / (None, None)
     """
     if skiprows_list is None:
-        skiprows_list = [46, 47, 45, 44, 48, 49, 50]
+        # ENLIGHTEN のヘッダ長は機種や設定で前後することがある
+        skiprows_list = [44, 45, 46, 47, 48, 49, 50, 52]
+
+    wavelength_candidates = ["Wavelength", "Wavelength (nm)", "wavelength", "wavelength (nm)"]
 
     for skiprows in skiprows_list:
         try:
             safe_seek(uploaded_file)
             try:
-                data = pd.read_csv(uploaded_file, skiprows=skiprows, nrows=None)
+                df = pd.read_csv(uploaded_file, skiprows=skiprows, engine="python")
             except UnicodeDecodeError:
                 safe_seek(uploaded_file)
-                data = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=skiprows, nrows=None)
+                df = pd.read_csv(uploaded_file, skiprows=skiprows, encoding="shift-jis", engine="python")
 
-            if 'Wavelength' in data.columns and (
-                'Processed' in data.columns or data.select_dtypes(include=[np.number]).shape[1] >= 2
-            ):
-                return data, skiprows
+            # 波長列の特定
+            wl_col = None
+            for c in df.columns:
+                cn = str(c).strip()
+                if cn in wavelength_candidates:
+                    wl_col = c
+                    break
+            if wl_col is None:
+                # 大文字小文字や空白に更に寛容に
+                for c in df.columns:
+                    if "wavelength" in str(c).lower():
+                        wl_col = c
+                        break
+            if wl_col is None:
+                continue  # 次の skiprows へ
+
+            # スペクトル列の特定
+            # "Processed" 系を最優先、それが無ければ Wavelength 以外の数値列の最後を採用
+            spec_col = None
+            processed_like = [c for c in df.columns if str(c).lower().startswith("processed")]
+            if len(processed_like) > 0:
+                spec_col = processed_like[-1]
+            else:
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                numeric_cols = [c for c in numeric_cols if str(c) != str(wl_col)]
+                if len(numeric_cols) >= 1:
+                    spec_col = numeric_cols[-1]
+                else:
+                    # 数値型推定が効かない場合、Wavelength 以外から末尾列を候補に
+                    others = [c for c in df.columns if str(c) != str(wl_col)]
+                    if len(others) >= 1:
+                        spec_col = others[-1]
+
+            if wl_col is None or spec_col is None:
+                continue
+
+            # 最低限の整合チェック
+            if df[wl_col].shape[0] >= 5 and df[spec_col].shape[0] >= 5:
+                return df[[wl_col, spec_col]].rename(columns={wl_col: "Wavelength", spec_col: "Processed"}), skiprows
         except Exception:
             continue
 

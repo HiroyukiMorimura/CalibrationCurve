@@ -734,7 +734,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（①・②の強度）",
             data=csv_h.getvalue(),
-            file_name=f"{file_name}_timeseries_heights.csv",
+            file_name=f"{file_name}_heights.csv",
             mime="text/csv",
         )
         
@@ -754,7 +754,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（ピーク比）",
             data=csv_r.getvalue(),
-            file_name=f"{file_name}_timeseries_ratio.csv",
+            file_name=f"{file_name}_ratio.csv",
             mime="text/csv",
         )
         
@@ -780,7 +780,7 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（濃度換算）",
             data=csv_c.getvalue(),
-            file_name=f"{file_name}_timeseries_concentration.csv",
+            file_name=f"{file_name}_concentration.csv",
             mime="text/csv",
         )
 

@@ -219,8 +219,12 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                     st.code("\n".join(logs[-800:]), language="text")  # 末尾だけ表示も可
                 else:
                     st.info("ログなし")
+        if debug_mode:
+            enable_debug()    # バッファをクリアしてロギング開始
+        else:
+            disable_debug()
         if processed_files:
-            # スペクトル表示（データ処理範囲） - Plotly
+            # スペクトル表示（データ処理範囲）
             st.subheader("スペクトル確認")
             fig_proc = go.Figure()
             for spectrum_data in analyzer.spectra_data:

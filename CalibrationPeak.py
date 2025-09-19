@@ -211,6 +211,14 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
             uploaded_files, start_wavenum, end_wavenum, dssn_th, savgol_wsize
         )
 
+        # ログ表示
+        if debug_mode:
+            with st.expander("🔎 デバッグログ（共通ユーティリティ）", expanded=False):
+                logs = get_debug_log()
+                if logs:
+                    st.code("\n".join(logs[-800:]), language="text")  # 末尾だけ表示も可
+                else:
+                    st.info("ログなし")
         if processed_files:
             # スペクトル表示（データ処理範囲） - Plotly
             st.subheader("スペクトル確認")

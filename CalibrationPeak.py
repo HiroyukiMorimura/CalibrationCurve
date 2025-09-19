@@ -724,7 +724,20 @@ def time_series_tab():
         fig_ts.add_trace(go.Scatter(x=idx, y=h2_series, mode='lines+markers', name='高さ②'))
         fig_ts.update_layout(xaxis_title='Index (time)', yaxis_title='Peak height (a.u.)', height=420)
         st.plotly_chart(fig_ts, use_container_width=True)
-
+        df_h = pd.DataFrame({
+            'Index': idx,
+            '高さ①': h1_series,
+            '高さ②': h2_series,
+        })
+        csv_h = io.StringIO()
+        df_h.to_csv(csv_h, index=False)
+        st.download_button(
+            label="CSVをダウンロード（範囲①・②の強度 時系列）",
+            data=csv_h.getvalue(),
+            file_name=f"{file_name}_timeseries_heights.csv",
+            mime="text/csv",
+        )
+        
         # ピーク比（①/②）の時系列
         st.subheader("ピーク比 (①/②) の時系列")
         ratio_series = [ (h1_series[i] / h2_series[i]) if h2_series[i] != 0 else np.nan for i in range(len(idx)) ]
@@ -732,7 +745,19 @@ def time_series_tab():
         fig_ratio.add_trace(go.Scatter(x=idx, y=ratio_series, mode='lines+markers', name='比(①/②)'))
         fig_ratio.update_layout(xaxis_title='Index (time)', yaxis_title='Ratio', height=380)
         st.plotly_chart(fig_ratio, use_container_width=True)
-
+        df_r = pd.DataFrame({
+            'Index': idx,
+            '比(①/②)': ratio_series,
+        })
+        csv_r = io.StringIO()
+        df_r.to_csv(csv_r, index=False)
+        st.download_button(
+            label="CSVをダウンロード（ピーク比 時系列）",
+            data=csv_r.getvalue(),
+            file_name=f"{file_name}_timeseries_ratio.csv",
+            mime="text/csv",
+        )
+        
         # 濃度換算の時系列（検量線: C = m * (H1/H2) + b）
         st.subheader("濃度換算の時系列")
         m = results.get('slope_ratio')
@@ -745,7 +770,19 @@ def time_series_tab():
             fig_conc.add_trace(go.Scatter(x=idx, y=conc_series, mode='lines+markers', name='濃度換算'))
             fig_conc.update_layout(xaxis_title='Index (time)', yaxis_title='Concentration (estimated)', height=380)
             st.plotly_chart(fig_conc, use_container_width=True)
-
+            
+        df_c = pd.DataFrame({
+            'Index': idx,
+            '濃度(推定)': conc_series,
+        })
+        csv_c = io.StringIO()
+        df_c.to_csv(csv_c, index=False)
+        st.download_button(
+            label="CSVをダウンロード（濃度換算 時系列）",
+            data=csv_c.getvalue(),
+            file_name=f"{file_name}_timeseries_concentration.csv",
+            mime="text/csv",
+        )
 
 # ---- 画面構成 ----
 def calibration_mode():

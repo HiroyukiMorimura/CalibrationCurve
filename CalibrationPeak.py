@@ -693,13 +693,21 @@ def time_series_tab():
         if parsed is None:
             st.error(f"{up.name} を時系列として解釈できませんでした。対応形式（Wasatch/RamanEye）をご利用ください。")
             continue
-        file_name, wn, mat, labels = parsed
+        file_name, wn, mat, time_axis = parsed
         base_name = os.path.splitext(file_name)[0]
 
         # スペクトル時系列（Heatmap）
         st.subheader(f"時系列スペクトル: {base_name}")
-        fig_hm = go.Figure(data=go.Heatmap(z=mat.T, x=wn, y=list(range(mat.shape[1])), colorbar=dict(title='Intensity')))
-        fig_hm.update_layout(xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Index (time)')
+        fig_hm = go.Figure(data=go.Heatmap(
+            z=mat,               # 行 = y(波数), 列 = x(時間)
+            x=time_axis,         # 横軸 = 時間[s]（Wasatch）/ index（その他）
+            y=wn,                # 縦軸 = Raman Shift
+            colorbar=dict(title='Intensity')
+        ))
+        fig_hm.update_layout(
+            xaxis_title='Time (s)',
+            yaxis_title='Raman Shift (cm⁻¹)'
+        )
         st.plotly_chart(fig_hm, use_container_width=True)
 
         # 範囲①/②のピーク高さを時系列で算出
@@ -722,14 +730,15 @@ def time_series_tab():
 
         # 時系列プロット（①・②）
         st.subheader("範囲①・②の強度（時系列）")
-        idx = list(range(len(h1_series)))
+        idx = time_axis  # ← x 軸に時間
         fig_ts = go.Figure()
         fig_ts.add_trace(go.Scatter(x=idx, y=h1_series, mode='lines+markers', name='高さ①'))
         fig_ts.add_trace(go.Scatter(x=idx, y=h2_series, mode='lines+markers', name='高さ②'))
-        fig_ts.update_layout(xaxis_title='Index (time)', yaxis_title='Peak height (a.u.)', height=420)
+        fig_ts.update_layout(xaxis_title='Time (s)', yaxis_title='Peak height (a.u.)', height=420)
         st.plotly_chart(fig_ts, use_container_width=True)
+        
         df_h = pd.DataFrame({
-            'Index': idx,
+            'Time_s': idx,
             '高さ①': h1_series,
             '高さ②': h2_series,
         })
@@ -738,19 +747,20 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（①・②の強度）",
             data=csv_h.getvalue(),
-            file_name=f"{base_name}_heights.csv",
+            file_name=f"{base_name}_timeseries_heights.csv",
             mime="text/csv",
         )
         
         # ピーク比（①/②）の時系列
         st.subheader("ピーク比 (①/②) の時系列")
-        ratio_series = [ (h1_series[i] / h2_series[i]) if h2_series[i] != 0 else np.nan for i in range(len(idx)) ]
+        ratio_series = [(h1_series[i] / h2_series[i]) if h2_series[i] != 0 else np.nan for i in range(len(idx))]
         fig_ratio = go.Figure()
         fig_ratio.add_trace(go.Scatter(x=idx, y=ratio_series, mode='lines+markers', name='比(①/②)'))
-        fig_ratio.update_layout(xaxis_title='Index (time)', yaxis_title='Ratio', height=380)
+        fig_ratio.update_layout(xaxis_title='Time (s)', yaxis_title='Ratio', height=380)
         st.plotly_chart(fig_ratio, use_container_width=True)
+        
         df_r = pd.DataFrame({
-            'Index': idx,
+            'Time_s': idx,
             '比(①/②)': ratio_series,
         })
         csv_r = io.StringIO()
@@ -758,35 +768,36 @@ def time_series_tab():
         st.download_button(
             label="CSVダウンロード（ピーク比）",
             data=csv_r.getvalue(),
-            file_name=f"{base_name}_ratio.csv",
+            file_name=f"{base_name}_timeseries_ratio.csv",
             mime="text/csv",
         )
         
         # 濃度換算の時系列（検量線: C = m * (H1/H2) + b）
         st.subheader("濃度換算の時系列")
-        m = results.get('slope_ratio')
-        b = results.get('intercept_ratio')
+        m = results.get('slope_ratio'); b = results.get('intercept_ratio')
+        conc_series = None
         if m is None or b is None:
             st.warning("検量線の係数が見つからないため、濃度換算を表示できません。")
         else:
-            conc_series = [ (m * r + b) if not np.isnan(r) else np.nan for r in ratio_series ]
+            conc_series = [(m * r + b) if not np.isnan(r) else np.nan for r in ratio_series]
             fig_conc = go.Figure()
             fig_conc.add_trace(go.Scatter(x=idx, y=conc_series, mode='lines+markers', name='濃度換算'))
-            fig_conc.update_layout(xaxis_title='Index (time)', yaxis_title='Concentration (estimated)', height=380)
+            fig_conc.update_layout(xaxis_title='Time (s)', yaxis_title='Concentration (estimated)', height=380)
             st.plotly_chart(fig_conc, use_container_width=True)
-            
-        df_c = pd.DataFrame({
-            'Index': idx,
-            '濃度(推定)': conc_series,
-        })
-        csv_c = io.StringIO()
-        df_c.to_csv(csv_c, index=False)
-        st.download_button(
-            label="CSVダウンロード（濃度換算）",
-            data=csv_c.getvalue(),
-            file_name=f"{base_name}_concentration.csv",
-            mime="text/csv",
-        )
+        
+            # ▼ conc_series がある時だけ CSV を出力
+            df_c = pd.DataFrame({
+                'Time_s': idx,
+                '濃度(推定)': conc_series,
+            })
+            csv_c = io.StringIO()
+            df_c.to_csv(csv_c, index=False)
+            st.download_button(
+                label="CSVダウンロード（濃度換算）",
+                data=csv_c.getvalue(),
+                file_name=f"{base_name}_timeseries_concentration.csv",
+                mime="text/csv",
+            )
 
 # ---- 画面構成 ----
 def calibration_mode():

@@ -15,6 +15,30 @@ from scipy.signal import savgol_filter, find_peaks, peak_prominences
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import csc_matrix, eye, diags
 
+# ===== DEBUG SUPPORT =====
+_DEBUG_ENABLED = False
+_DEBUG_BUFFER = []  # 文字列ログのリングバッファ。必要ならdequeに。
+def enable_debug():
+    global _DEBUG_ENABLED, _DEBUG_BUFFER
+    _DEBUG_ENABLED = True
+    _DEBUG_BUFFER = []
+
+def disable_debug():
+    global _DEBUG_ENABLED
+    _DEBUG_ENABLED = False
+
+def _dbg(msg: str):
+    if _DEBUG_ENABLED:
+        try:
+            _DEBUG_BUFFER.append(str(msg))
+        except Exception:
+            pass
+
+def get_debug_log():
+    # Streamlit で表示するための取得口
+    return list(_DEBUG_BUFFER)
+# =========================
+
 
 # =============================================================================
 # 基本ヘルパー
@@ -44,38 +68,52 @@ def safe_seek(file_obj):
 
 
 def read_csv_file(uploaded_file, file_extension: str):
-    """拡張子から区切りを推定して DataFrame に読み込み"""
     sep = ',' if str(file_extension).lower() == "csv" else '\t'
+    _dbg(f"[read_csv_file] ext={file_extension} -> sep='{sep}'")
     try:
         safe_seek(uploaded_file)
-        return pd.read_csv(uploaded_file, sep=sep, header=0, index_col=None, on_bad_lines='skip')
+        df = pd.read_csv(uploaded_file, sep=sep, header=0, index_col=None, on_bad_lines='skip')
+        _dbg(f"[read_csv_file] ok utf-8 rows={len(df)} cols={list(df.columns)[:5]}")
+        return df
     except UnicodeDecodeError:
+        _dbg("[read_csv_file] UnicodeDecodeError -> try shift_jis")
         safe_seek(uploaded_file)
         try:
-            return pd.read_csv(uploaded_file, sep=sep, encoding='shift_jis',
-                               header=0, index_col=None, on_bad_lines='skip')
-        except Exception:
+            df = pd.read_csv(uploaded_file, sep=sep, encoding='shift_jis',
+                             header=0, index_col=None, on_bad_lines='skip')
+            _dbg(f"[read_csv_file] ok shift_jis rows={len(df)} cols={list(df.columns)[:5]}")
+            return df
+        except Exception as e:
+            _dbg(f"[read_csv_file] FAILED shift_jis: {repr(e)}")
             return None
-    except Exception:
+    except Exception as e:
+        _dbg(f"[read_csv_file] FAILED: {repr(e)}")
         return None
 
 
 def detect_file_type(data: pd.DataFrame) -> str:
-    """先頭列名からファイルタイプを推定"""
     try:
         first_column = str(data.columns[0])
+        _dbg(f"[detect_file_type] first_column='{first_column}'")
         if first_column.startswith("# Laser Wavelength"):
+            _dbg("[detect_file_type] -> ramaneye_new")
             return "ramaneye_new"
         if first_column == "WaveNumber":
+            _dbg("[detect_file_type] -> ramaneye_old")
             return "ramaneye_old"
         if first_column == "Timestamp":
+            _dbg("[detect_file_type] -> ramaneye_old_old")
             return "ramaneye_old_old"
         if first_column == "Pixels":
+            _dbg("[detect_file_type] -> eagle")
             return "eagle"
-        if first_column == "ENLIGHTEN Version":
+        if first_column == "ENLIGHTEN Version" or "enlighten" in first_column.lower():
+            _dbg("[detect_file_type] -> wasatch")
             return "wasatch"
+        _dbg("[detect_file_type] -> unknown")
         return "unknown"
-    except Exception:
+    except Exception as e:
+        _dbg(f"[detect_file_type] FAILED: {repr(e)}")
         return "unknown"
 
 

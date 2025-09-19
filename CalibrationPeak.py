@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 ラマン分光：ピーク高さ比による検量線作成・分析モジュール
-- 片方を信号ピーク（①）、もう片方を基準ピーク（②）として高さ比 H1/H2 を説明変数に一次回帰
-- 既存の「面積」「PLS（多変量）」機能は削除
-- 解析範囲は 2 区間（①と②）を指定・可視化
 """
 
 import streamlit as st
@@ -14,15 +11,14 @@ import plotly.graph_objects as go
 import io
 import os
 
-# ページ設定：横幅いっぱいに表示
-st.sidebar.markdown("### 設定")
+# ページ設定：最初に呼び出す
 st.set_page_config(layout="wide", initial_sidebar_state='expanded')
+st.sidebar.markdown("### 設定")
 
-# 共通ユーティリティ関数
+# 共通ユーティリティ関数（デバッグ関連のimportは削除）
 from common_utils import (
-    detect_file_type, read_csv_file, find_index, WhittakerSmooth, 
-    asymmetric_least_squares, remove_outliers_and_interpolate, process_spectrum_file,
-    enable_debug, disable_debug, get_debug_log
+    detect_file_type, read_csv_file, find_index,
+    asymmetric_least_squares, remove_outliers_and_interpolate, process_spectrum_file
 )
 
 # 日本語フォント
@@ -61,7 +57,7 @@ class CalibrationAnalyzer:
                         'filename': file_name,
                         'wavenumbers': wavenum,
                         'raw_spectrum': raw_spectrum,
-                        'corrected_spectrum': smoothed_spectrum,
+                        'corrected_spectrum': smoothed_spectrum,  # 表示用は平滑・ベースライン除去後
                         'file_type': file_type,
                     })
                     processed_files.append(file_name)
@@ -187,6 +183,7 @@ def display_calibration_equation(results):
                  f"濃度 = {m:.6f} × (高さ①/高さ②) - {abs(b):.6f}"
             st.markdown(f"- 比の式: **{eq}**")
 
+
 # ---- タブ：検量線作成 ----
 def calibration_creation_tab(analyzer: CalibrationAnalyzer):
     st.subheader("検量線作成（ピーク高さ比）")
@@ -206,26 +203,11 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
             end_wavenum = st.number_input("波数（終了）を入力してください:", value=2000, min_value=start_wavenum + 1, max_value=4000)
             dssn_th = st.number_input("ベースラインパラメーターを入力してください:", value=1000, min_value=1, max_value=10000) / 1e7
             savgol_wsize = st.number_input("移動平均のウィンドウサイズを入力してください:", value=5, min_value=3, max_value=101, step=2)
-            debug_mode = st.checkbox("デバッグモード", value=True)  # 追加
-        
-        if debug_mode:
-            enable_debug()    # バッファを初期化してロギング開始
-        else:
-            disable_debug()
-            
+
         processed_files = analyzer.process_spectra_files(
             uploaded_files, start_wavenum, end_wavenum, dssn_th, savgol_wsize
         )
 
-        # ログ表示
-        if debug_mode:
-            with st.expander("🔎 デバッグログ（共通ユーティリティ）", expanded=False):
-                logs = get_debug_log()
-                if logs:
-                    st.code("\n".join(logs[-800:]), language="text")  # 末尾だけ表示も可
-                else:
-                    st.info("ログなし")
-                    
         if processed_files:
             # スペクトル表示（データ処理範囲）
             st.subheader("スペクトル確認")
@@ -261,7 +243,6 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                 num_rows="fixed",
                 column_config={
                     "ファイル名": st.column_config.TextColumn(disabled=True),
-                    # ここを修正
                     "濃度": st.column_config.NumberColumn(
                         "濃度",
                         help="各サンプルの濃度を入力してください",
@@ -302,8 +283,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                         min_value=int(analyzer.wavenumbers.min()) if analyzer.wavenumbers is not None else start_wavenum,
                         max_value=int(analyzer.wavenumbers.max()) if analyzer.wavenumbers is not None else end_wavenum,
                     )
-                    _a1_end_default = 1730
-                    _a1_end_default = max(_a1_end_default, analysis1_start)  # min_value 以上に調整
+                    _a1_end_default = max(1730, analysis1_start)
                     analysis1_end = st.number_input(
                         "解析終了波数①:",
                         value=_a1_end_default,
@@ -317,8 +297,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                         min_value=int(analyzer.wavenumbers.min()) if analyzer.wavenumbers is not None else start_wavenum,
                         max_value=int(analyzer.wavenumbers.max()) if analyzer.wavenumbers is not None else end_wavenum,
                     )
-                    _a2_end_default = 1625
-                    _a2_end_default = max(_a2_end_default, analysis2_start)  # min_value 以上に調整
+                    _a2_end_default = max(1625, analysis2_start)
                     analysis2_end = st.number_input(
                         "解析終了波数②:",
                         value=_a2_end_default,
@@ -326,7 +305,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                         max_value=int(analyzer.wavenumbers.max()) if analyzer.wavenumbers is not None else end_wavenum,
                     )
 
-                # 入力バリデーション（①開始 < ①終了、②開始 < ②終了 のみ）
+                # 入力バリデーション
                 if analysis1_start >= analysis1_end:
                     st.error("解析範囲①は『開始 < 終了』にしてください。")
                     return
@@ -344,18 +323,11 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                         mode='lines',
                         name=spectrum_data['filename']
                     ))
-                # ①の目印（赤）
                 fig2.add_vline(x=analysis1_start, line_dash="dash", line_color="red", annotation_text=f"①開始: {analysis1_start} cm⁻¹")
-                fig2.add_vline(x=analysis1_end, line_dash="dash", line_color="red", annotation_text=f"①終了: {analysis1_end} cm⁻¹")
-                # ②の目印（青）
+                fig2.add_vline(x=analysis1_end,   line_dash="dash", line_color="red", annotation_text=f"①終了: {analysis1_end} cm⁻¹")
                 fig2.add_vline(x=analysis2_start, line_dash="dash", line_color="blue", annotation_text=f"②開始: {analysis2_start} cm⁻¹")
-                fig2.add_vline(x=analysis2_end, line_dash="dash", line_color="blue", annotation_text=f"②終了: {analysis2_end} cm⁻¹")
-
-                fig2.update_layout(
-                    xaxis_title='Raman Shift (cm⁻¹)',
-                    yaxis_title='Intensity (a.u.)',
-                    height=420
-                )
+                fig2.add_vline(x=analysis2_end,   line_dash="dash", line_color="blue", annotation_text=f"②終了: {analysis2_end} cm⁻¹")
+                fig2.update_layout(xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Intensity (a.u.)', height=420)
                 fig2.update_xaxes(range=[start_wavenum, end_wavenum])
                 st.plotly_chart(fig2, use_container_width=True)
 
@@ -371,19 +343,15 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                                 analysis1_start, analysis1_end, analysis2_start, analysis2_end
                             )
                             n = min(len(h1), len(h2), len(analyzer.concentrations))
-                            h1 = h1[:n]
-                            h2 = h2[:n]
-                            ratios = ratios[:n]
+                            h1 = h1[:n]; h2 = h2[:n]; ratios = ratios[:n]
                             conc_aligned = np.array(analyzer.concentrations)[:n]
 
                             valid = (~np.isnan(ratios)) & (h1 > 0) & (h2 > 0)
-                            v_ratio = ratios[valid]
-                            v_conc = conc_aligned[valid]
+                            v_ratio = ratios[valid]; v_conc = conc_aligned[valid]
 
                             if len(v_ratio) >= 2:
                                 slope_ratio, intercept_ratio = np.polyfit(v_ratio, v_conc, 1)
                                 y_pred = slope_ratio * v_ratio + intercept_ratio
-                                # 指標
                                 ss_res = float(np.sum((v_conc - y_pred) ** 2))
                                 ss_tot = float(np.sum((v_conc - np.mean(v_conc)) ** 2))
                                 r2 = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
@@ -412,11 +380,8 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
             # 結果表示
             if 'calibration_results' in st.session_state:
                 results = st.session_state.calibration_results
-
-                # 検量線数式
                 display_calibration_equation(results)
 
-                # 統計指標
                 st.subheader("統計指標")
                 if results['type'] == 'peak_ratio':
                     st.info(
@@ -430,9 +395,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                     with c2:
                         st.metric("RMSE", f"{results['rmse']:.4f}")
 
-                    # 検量線プロット（比）
-                    ratios = results['ratios']
-                    concentrations = results['concentrations']
+                    ratios = results['ratios']; concentrations = results['concentrations']
                     valid = (~np.isnan(ratios)) & (results['heights1'] > 0) & (results['heights2'] > 0)
                     vr, vc = ratios[valid], concentrations[valid]
 
@@ -488,7 +451,6 @@ def spectrum_analysis_tab():
     results = st.session_state.calibration_results
     analyzer: CalibrationAnalyzer = results['analyzer']
 
-    # 固定情報
     if results['type'] == 'peak_ratio':
         w1s, w1e = results['wave_ranges'][0]
         w2s, w2e = results['wave_ranges'][1]
@@ -499,7 +461,6 @@ def spectrum_analysis_tab():
 
     display_calibration_equation(results)
 
-    # 新規スペクトル
     st.subheader("濃度算出用ファイル")
     uploaded_spectrum = st.file_uploader(
         "分析対象のラマンスペクトルをアップロードしてください",
@@ -509,7 +470,6 @@ def spectrum_analysis_tab():
 
     if uploaded_spectrum:
         try:
-            # 作成時に保存したベースライン設定を引き継ぎ、両範囲をカバーする処理範囲で読み込み
             w1s, w1e = results['wave_ranges'][0]
             w2s, w2e = results['wave_ranges'][1]
             wave_start = min(w1s, w2s)
@@ -531,20 +491,18 @@ def spectrum_analysis_tab():
                 'corrected_spectrum': smoothed_spectrum,
             }
 
-            # 表示（全体）
             st.subheader("分析スペクトル")
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=wavenum, y=smoothed_spectrum, mode='lines', name=file_name))
-            fig.add_vline(x=w1s, line_dash="dash", line_color="red", annotation_text="①開始")
-            fig.add_vline(x=w1e, line_dash="dash", line_color="red", annotation_text="①終了")
+            fig.add_vline(x=w1s, line_dash="dash", line_color="red",  annotation_text="①開始")
+            fig.add_vline(x=w1e, line_dash="dash", line_color="red",  annotation_text="①終了")
             fig.add_vline(x=w2s, line_dash="dash", line_color="blue", annotation_text="②開始")
             fig.add_vline(x=w2e, line_dash="dash", line_color="blue", annotation_text="②終了")
             fig.update_layout(xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Intensity (a.u.)', height=420)
             st.plotly_chart(fig, use_container_width=True)
 
             if results['type'] == 'peak_ratio':
-                m = results['slope_ratio']
-                b = results['intercept_ratio']
+                m = results['slope_ratio']; b = results['intercept_ratio']
                 (concentration, h1, h2, ratio,
                  x1, y1, y1_corr, b1,
                  x2, y2, y2_corr, b2) = analyzer.predict_concentration_ratio(
@@ -557,32 +515,25 @@ def spectrum_analysis_tab():
 
                 st.subheader("分析結果")
                 c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.metric("予測濃度", f"{concentration:.4f}")
-                with c2:
-                    st.metric("高さ①", f"{h1:.4f}")
-                with c3:
-                    st.metric("高さ②", f"{h2:.4f}")
-                with c4:
-                    st.metric("比(①/②)", f"{ratio:.4f}")
+                with c1: st.metric("予測濃度", f"{concentration:.4f}")
+                with c2: st.metric("高さ①", f"{h1:.4f}")
+                with c3: st.metric("高さ②", f"{h2:.4f}")
+                with c4: st.metric("比(①/②)", f"{ratio:.4f}")
 
-                # ①のベースライン除去可視化
                 fig_fit1 = go.Figure()
-                fig_fit1.add_trace(go.Scatter(x=x1, y=y1, mode='lines', name='元データ①'))
-                fig_fit1.add_trace(go.Scatter(x=x1, y=b1, mode='lines', name='一次ベースライン①', line=dict(dash='dot')))
-                fig_fit1.add_trace(go.Scatter(x=x1, y=y1_corr, mode='lines', name='ベースライン除去後①'))
+                fig_fit1.add_trace(go.Scatter(x=x1, y=y1,       mode='lines', name='元データ①'))
+                fig_fit1.add_trace(go.Scatter(x=x1, y=b1,       mode='lines', name='一次ベースライン①', line=dict(dash='dot')))
+                fig_fit1.add_trace(go.Scatter(x=x1, y=y1_corr,  mode='lines', name='ベースライン除去後①'))
                 fig_fit1.update_layout(title='解析範囲①のフィッティング', xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Intensity (a.u.)', height=380)
                 st.plotly_chart(fig_fit1, use_container_width=True)
 
-                # ②のベースライン除去可視化
                 fig_fit2 = go.Figure()
-                fig_fit2.add_trace(go.Scatter(x=x2, y=y2, mode='lines', name='元データ②'))
-                fig_fit2.add_trace(go.Scatter(x=x2, y=b2, mode='lines', name='一次ベースライン②', line=dict(dash='dot')))
-                fig_fit2.add_trace(go.Scatter(x=x2, y=y2_corr, mode='lines', name='ベースライン除去後②'))
+                fig_fit2.add_trace(go.Scatter(x=x2, y=y2,       mode='lines', name='元データ②'))
+                fig_fit2.add_trace(go.Scatter(x=x2, y=b2,       mode='lines', name='一次ベースライン②', line=dict(dash='dot')))
+                fig_fit2.add_trace(go.Scatter(x=x2, y=y2_corr,  mode='lines', name='ベースライン除去後②'))
                 fig_fit2.update_layout(title='解析範囲②のフィッティング', xaxis_title='Raman Shift (cm⁻¹)', yaxis_title='Intensity (a.u.)', height=380)
                 st.plotly_chart(fig_fit2, use_container_width=True)
 
-                # エクスポート（分析タブ）
                 st.subheader("結果エクスポート")
                 base_name = os.path.splitext(file_name)[0]
                 df_out = pd.DataFrame({
@@ -591,12 +542,9 @@ def spectrum_analysis_tab():
                     '高さ①': [h1],
                     '高さ②': [h2],
                     '比(①/②)': [ratio],
-                    '解析開始波数①': [w1s],
-                    '解析終了波数①': [w1e],
-                    '解析開始波数②': [w2s],
-                    '解析終了波数②': [w2e],
-                    'dssn_th': [baseline_dssn],
-                    'savgol_wsize': [baseline_win],
+                    '解析開始波数①': [w1s], '解析終了波数①': [w1e],
+                    '解析開始波数②': [w2s], '解析終了波数②': [w2e],
+                    'dssn_th': [baseline_dssn], 'savgol_wsize': [baseline_win],
                 })
                 csv_buffer = io.StringIO()
                 csv_buffer.write("# スペクトル分析結果（ピーク比）\n")
@@ -628,7 +576,6 @@ def time_series_tab():
     results = st.session_state.calibration_results
     analyzer: CalibrationAnalyzer = results['analyzer']
 
-    # 共通設定（このタブでは変更不可）
     proc = results.get('proc_range', None)
     if not proc or len(proc) != 2:
         st.warning("処理範囲情報が見つかりません。いったん検量線作成を実行してください。")
@@ -663,7 +610,7 @@ def time_series_tab():
 
         if file_type == "wasatch":
             try:
-                df = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=46)
+                df = pd.read_csv(uploaded_file, encoding='shift_jis', skiprows=46)
             except Exception:
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, skiprows=46)
@@ -690,21 +637,17 @@ def time_series_tab():
         else:
             return None
 
-        # 昇順に統一
         if wavenum_full[0] > wavenum_full[-1]:
             wavenum_full = wavenum_full[::-1]
             spectra_full = spectra_full[::-1, :]
 
-        # 処理範囲へ切り出し
         s = find_index(wavenum_full, proc_start)
         e = find_index(wavenum_full, proc_end)
         wn = np.array(wavenum_full[s:e+1])
         mat = np.array(spectra_full[s:e+1, :])  # 形状: (N_wavenum, N_time)
         return file_name, wn, mat, labels
 
-    # 各ファイルごとに可視化
     for up in uploaded_files:
-        
         parsed = parse_timeseries(up)
         if parsed is None:
             st.error(f"{up.name} を時系列として解釈できませんでした。対応形式（Wasatch/RamanEye）をご利用ください。")
@@ -712,86 +655,52 @@ def time_series_tab():
         file_name, wn, mat, time_axis = parsed
         base_name = os.path.splitext(file_name)[0]
 
-        # スペクトル時系列（Heatmap）
         st.subheader(f"時系列スペクトル: {base_name}")
         fig_hm = go.Figure(data=go.Heatmap(
-            z=mat,               # 行 = y(波数), 列 = x(時間)
-            x=time_axis,         # 横軸 = 時間[s]（Wasatch）/ index（その他）
-            y=wn,                # 縦軸 = Raman Shift
-            colorbar=dict(title='Intensity')
+            z=mat, x=time_axis, y=wn, colorbar=dict(title='Intensity')
         ))
-        fig_hm.update_layout(
-            xaxis_title='Time (s)',
-            yaxis_title='Raman Shift (cm⁻¹)'
-        )
+        fig_hm.update_layout(xaxis_title='Time (s)', yaxis_title='Raman Shift (cm⁻¹)')
         st.plotly_chart(fig_hm, use_container_width=True)
 
-        # 範囲①/②のピーク高さを時系列で算出
+        # 範囲①/②のピーク高さの時系列
         h1_series, h2_series = [], []
-        s1 = find_index(wn, w1s)
-        e1 = find_index(wn, w1e)
-        s2 = find_index(wn, w2s)
-        e2 = find_index(wn, w2e)
-        x1 = wn[s1:e1+1]
-        x2 = wn[s2:e2+1]
+        s1 = find_index(wn, w1s); e1 = find_index(wn, w1e)
+        s2 = find_index(wn, w2s); e2 = find_index(wn, w2e)
+        x1 = wn[s1:e1+1]; x2 = wn[s2:e2+1]
         for j in range(mat.shape[1]):
-            y1 = mat[s1:e1+1, j]
-            y2 = mat[s2:e2+1, j]
+            y1 = mat[s1:e1+1, j]; y2 = mat[s2:e2+1, j]
             y1_corr, _ = analyzer.linear_baseline_correction(x1, y1)
             y2_corr, _ = analyzer.linear_baseline_correction(x2, y2)
-            h1 = analyzer.calculate_peak_height(y1_corr)
-            h2 = analyzer.calculate_peak_height(y2_corr)
-            h1_series.append(h1)
-            h2_series.append(h2)
+            h1_series.append(analyzer.calculate_peak_height(y1_corr))
+            h2_series.append(analyzer.calculate_peak_height(y2_corr))
 
-        # 時系列プロット（①・②）
         st.subheader("範囲①・②の強度（時系列）")
-        idx = time_axis  # ← x 軸に時間
+        idx = time_axis
         fig_ts = go.Figure()
         fig_ts.add_trace(go.Scatter(x=idx, y=h1_series, mode='lines+markers', name='高さ①'))
         fig_ts.add_trace(go.Scatter(x=idx, y=h2_series, mode='lines+markers', name='高さ②'))
         fig_ts.update_layout(xaxis_title='Time (s)', yaxis_title='Peak height (a.u.)', height=420)
         st.plotly_chart(fig_ts, use_container_width=True)
-        
-        df_h = pd.DataFrame({
-            'Time_s': idx,
-            '高さ①': h1_series,
-            '高さ②': h2_series,
-        })
-        csv_h = io.StringIO()
-        df_h.to_csv(csv_h, index=False)
-        st.download_button(
-            label="CSVダウンロード（①・②の強度）",
-            data=csv_h.getvalue(),
-            file_name=f"{base_name}_timeseries_heights.csv",
-            mime="text/csv",
-        )
-        
-        # ピーク比（①/②）の時系列
+
+        df_h = pd.DataFrame({'Time_s': idx, '高さ①': h1_series, '高さ②': h2_series})
+        csv_h = io.StringIO(); df_h.to_csv(csv_h, index=False)
+        st.download_button("CSVダウンロード（①・②の強度）", data=csv_h.getvalue(),
+                           file_name=f"{base_name}_timeseries_heights.csv", mime="text/csv")
+
         st.subheader("ピーク比 (①/②) の時系列")
         ratio_series = [(h1_series[i] / h2_series[i]) if h2_series[i] != 0 else np.nan for i in range(len(idx))]
         fig_ratio = go.Figure()
         fig_ratio.add_trace(go.Scatter(x=idx, y=ratio_series, mode='lines+markers', name='比(①/②)'))
         fig_ratio.update_layout(xaxis_title='Time (s)', yaxis_title='Ratio', height=380)
         st.plotly_chart(fig_ratio, use_container_width=True)
-        
-        df_r = pd.DataFrame({
-            'Time_s': idx,
-            '比(①/②)': ratio_series,
-        })
-        csv_r = io.StringIO()
-        df_r.to_csv(csv_r, index=False)
-        st.download_button(
-            label="CSVダウンロード（ピーク比）",
-            data=csv_r.getvalue(),
-            file_name=f"{base_name}_timeseries_ratio.csv",
-            mime="text/csv",
-        )
-        
-        # 濃度換算の時系列（検量線: C = m * (H1/H2) + b）
+
+        df_r = pd.DataFrame({'Time_s': idx, '比(①/②)': ratio_series})
+        csv_r = io.StringIO(); df_r.to_csv(csv_r, index=False)
+        st.download_button("CSVダウンロード（ピーク比）", data=csv_r.getvalue(),
+                           file_name=f"{base_name}_timeseries_ratio.csv", mime="text/csv")
+
         st.subheader("濃度換算の時系列")
         m = results.get('slope_ratio'); b = results.get('intercept_ratio')
-        conc_series = None
         if m is None or b is None:
             st.warning("検量線の係数が見つからないため、濃度換算を表示できません。")
         else:
@@ -800,26 +709,17 @@ def time_series_tab():
             fig_conc.add_trace(go.Scatter(x=idx, y=conc_series, mode='lines+markers', name='濃度換算'))
             fig_conc.update_layout(xaxis_title='Time (s)', yaxis_title='Concentration (estimated)', height=380)
             st.plotly_chart(fig_conc, use_container_width=True)
-        
-            # ▼ conc_series がある時だけ CSV を出力
-            df_c = pd.DataFrame({
-                'Time_s': idx,
-                '濃度(推定)': conc_series,
-            })
-            csv_c = io.StringIO()
-            df_c.to_csv(csv_c, index=False)
-            st.download_button(
-                label="CSVダウンロード（濃度換算）",
-                data=csv_c.getvalue(),
-                file_name=f"{base_name}_timeseries_concentration.csv",
-                mime="text/csv",
-            )
+
+            df_c = pd.DataFrame({'Time_s': idx, '濃度(推定)': conc_series})
+            csv_c = io.StringIO(); df_c.to_csv(csv_c, index=False)
+            st.download_button("CSVダウンロード（濃度換算）", data=csv_c.getvalue(),
+                               file_name=f"{base_name}_timeseries_concentration.csv", mime="text/csv")
+
 
 # ---- 画面構成 ----
 def calibration_mode():
     """検量線作成モード（タブ版）"""
     st.header("検量線作成・分析システム（ピーク高さ比）")
-
     tab1, tab2, tab3 = st.tabs(["検量線作成", "スペクトル分析", "時系列表示"])
 
     if 'analyzer' not in st.session_state:

@@ -1,44 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-共通ユーティリティ関数（ALS版）
+共通ユーティリティ関数（ALS版 / クリーン版）
 """
 
 from pathlib import Path
 from typing import Optional, Tuple
 import io
-import re
 
 import numpy as np
 import pandas as pd
 import scipy.signal as signal
-from scipy.signal import savgol_filter, find_peaks, peak_prominences
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import csc_matrix, eye, diags
-
-# ===== DEBUG SUPPORT =====
-_DEBUG_ENABLED = False
-_DEBUG_BUFFER = []  # 文字列ログのリングバッファ。必要ならdequeに。
-def enable_debug():
-    global _DEBUG_ENABLED, _DEBUG_BUFFER
-    _DEBUG_ENABLED = True
-    _DEBUG_BUFFER = []
-
-def disable_debug():
-    global _DEBUG_ENABLED
-    _DEBUG_ENABLED = False
-
-def _dbg(msg: str):
-    if _DEBUG_ENABLED:
-        try:
-            _DEBUG_BUFFER.append(str(msg))
-        except Exception:
-            pass
-
-def get_debug_log():
-    # Streamlit で表示するための取得口
-    return list(_DEBUG_BUFFER)
-# =========================
-
 
 # =============================================================================
 # 基本ヘルパー
@@ -68,52 +41,38 @@ def safe_seek(file_obj):
 
 
 def read_csv_file(uploaded_file, file_extension: str):
+    """CSV/TSVを読み込む（UTF-8→Shift_JISフォールバック）"""
     sep = ',' if str(file_extension).lower() == "csv" else '\t'
-    _dbg(f"[read_csv_file] ext={file_extension} -> sep='{sep}'")
     try:
         safe_seek(uploaded_file)
-        df = pd.read_csv(uploaded_file, sep=sep, header=0, index_col=None, on_bad_lines='skip')
-        _dbg(f"[read_csv_file] ok utf-8 rows={len(df)} cols={list(df.columns)[:5]}")
-        return df
+        return pd.read_csv(uploaded_file, sep=sep, header=0, index_col=None, on_bad_lines='skip')
     except UnicodeDecodeError:
-        _dbg("[read_csv_file] UnicodeDecodeError -> try shift_jis")
         safe_seek(uploaded_file)
         try:
-            df = pd.read_csv(uploaded_file, sep=sep, encoding='shift_jis',
-                             header=0, index_col=None, on_bad_lines='skip')
-            _dbg(f"[read_csv_file] ok shift_jis rows={len(df)} cols={list(df.columns)[:5]}")
-            return df
-        except Exception as e:
-            _dbg(f"[read_csv_file] FAILED shift_jis: {repr(e)}")
+            return pd.read_csv(uploaded_file, sep=sep, encoding='shift_jis',
+                               header=0, index_col=None, on_bad_lines='skip')
+        except Exception:
             return None
-    except Exception as e:
-        _dbg(f"[read_csv_file] FAILED: {repr(e)}")
+    except Exception:
         return None
 
 
 def detect_file_type(data: pd.DataFrame) -> str:
+    """ファイル先頭列名から簡易タイプ判定"""
     try:
         first_column = str(data.columns[0])
-        _dbg(f"[detect_file_type] first_column='{first_column}'")
         if first_column.startswith("# Laser Wavelength"):
-            _dbg("[detect_file_type] -> ramaneye_new")
             return "ramaneye_new"
         if first_column == "WaveNumber":
-            _dbg("[detect_file_type] -> ramaneye_old")
             return "ramaneye_old"
         if first_column == "Timestamp":
-            _dbg("[detect_file_type] -> ramaneye_old_old")
             return "ramaneye_old_old"
         if first_column == "Pixels":
-            _dbg("[detect_file_type] -> eagle")
             return "eagle"
         if first_column == "ENLIGHTEN Version" or "enlighten" in first_column.lower():
-            _dbg("[detect_file_type] -> wasatch")
             return "wasatch"
-        _dbg("[detect_file_type] -> unknown")
         return "unknown"
-    except Exception as e:
-        _dbg(f"[detect_file_type] FAILED: {repr(e)}")
+    except Exception:
         return "unknown"
 
 
@@ -155,20 +114,18 @@ def asymmetric_least_squares(y, lam, p=0.01, niter=10, differences=2):
     """
     ALS（Asymmetric Least Squares）ベースライン推定
     - lam: 平滑化強度（λ）
-    - p:   非対称重み（小さいほど上側点を弱く信頼）※固定値
-    - niter: 反復回数 ※固定値
+    - p:   非対称重み（小さいほど上側点を弱く信頼）
+    - niter: 反復回数
     - differences: 差分階数（通常は2）
     """
     y = np.asarray(y, dtype=np.float64)
     m = y.size
     w = np.ones(m, dtype=np.float64)
-    lam = float(lam) if np.isfinite(lam) and lam > 0 else 1e4  # フォールバック
+    lam = float(lam) if np.isfinite(lam) and lam > 0 else 1e4
 
     for _ in range(int(niter)):
         z = WhittakerSmooth(y, w, lam, differences)
-        # y > z ならピーク側 → 小さい重み p、y <= z なら背景側 → 大きい重み (1-p)
         w = np.where(y > z, p, 1.0 - p).astype(np.float64)
-
     return z
 
 
@@ -196,56 +153,15 @@ def remove_outliers_and_interpolate(spectrum, window_size=10, threshold_factor=3
     return cleaned
 
 
-def find_peak_width(spectra, first_dev, peak_position, window_size=20):
-    """ピーク近傍の開始/終了インデックス"""
-    start_idx = max(peak_position - window_size, 0)
-    end_idx   = min(peak_position + window_size, len(first_dev) - 1)
-    local_start_idx = int(np.argmax(first_dev[start_idx:end_idx+1]) + start_idx)
-    local_end_idx   = int(np.argmin(first_dev[start_idx:end_idx+1]) + start_idx)
-    return local_start_idx, local_end_idx
-
-
-def find_peak_area(spectra, local_start_idx, local_end_idx):
-    """ピーク面積を台形則で計算"""
-    return float(np.trapz(spectra[local_start_idx:local_end_idx+1], dx=1))
-
-
-def calculate_peak_width(spectrum, peak_idx, wavenum):
-    """半値幅（FWHM）を計算"""
-    spectrum = np.asarray(spectrum, dtype=float)
-    wavenum  = np.asarray(wavenum, dtype=float)
-    if peak_idx <= 0 or peak_idx >= len(spectrum) - 1:
-        return 0.0
-
-    peak_intensity = spectrum[peak_idx]
-    half_max = peak_intensity / 2.0
-
-    left_idx = peak_idx
-    while left_idx > 0 and spectrum[left_idx] > half_max:
-        left_idx -= 1
-    if left_idx < peak_idx and spectrum[left_idx] <= half_max < spectrum[left_idx + 1]:
-        ratio = (half_max - spectrum[left_idx]) / (spectrum[left_idx + 1] - spectrum[left_idx] + 1e-12)
-        left_w = wavenum[left_idx] + ratio * (wavenum[left_idx + 1] - wavenum[left_idx])
-    else:
-        left_w = wavenum[left_idx] if left_idx >= 0 else wavenum[0]
-
-    right_idx = peak_idx
-    while right_idx < len(spectrum) - 1 and spectrum[right_idx] > half_max:
-        right_idx += 1
-    if right_idx > peak_idx and spectrum[right_idx] <= half_max < spectrum[right_idx - 1]:
-        ratio = (half_max - spectrum[right_idx]) / (spectrum[right_idx - 1] - spectrum[right_idx] + 1e-12)
-        right_w = wavenum[right_idx] + ratio * (wavenum[right_idx - 1] - wavenum[right_idx])
-    else:
-        right_w = wavenum[right_idx] if right_idx < len(wavenum) else wavenum[-1]
-
-    return float(abs(right_w - left_w))
-
-
 # =============================================================================
 # ファイル読込のバリエーション
 # =============================================================================
 
 def try_read_wasatch_file(uploaded_file, skiprows_list=None):
+    """
+    Wasatch (ENLIGHTEN) CSVの本体部を推定して読み込む。
+    戻り値: (DataFrame{"Wavelength","Processed"}, used_skiprows) or (None, None)
+    """
     if skiprows_list is None:
         skiprows_list = [44, 45, 46, 47, 48, 49, 50, 52]
     wavelength_candidates = ["Wavelength", "Wavelength (nm)", "wavelength", "wavelength (nm)"]
@@ -253,13 +169,11 @@ def try_read_wasatch_file(uploaded_file, skiprows_list=None):
     for skiprows in skiprows_list:
         try:
             safe_seek(uploaded_file)
-            _dbg(f"[try_read_wasatch_file] try skiprows={skiprows}")
             try:
                 df = pd.read_csv(uploaded_file, skiprows=skiprows, engine="python")
             except UnicodeDecodeError:
                 safe_seek(uploaded_file)
                 df = pd.read_csv(uploaded_file, skiprows=skiprows, encoding="shift-jis", engine="python")
-            _dbg(f"[try_read_wasatch_file] columns={list(df.columns)[:8]} rows={len(df)}")
 
             wl_col = None
             for c in df.columns:
@@ -268,7 +182,6 @@ def try_read_wasatch_file(uploaded_file, skiprows_list=None):
                     wl_col = c
                     break
             if wl_col is None:
-                _dbg("[try_read_wasatch_file] wavelength column not found -> continue")
                 continue
 
             processed_like = [c for c in df.columns if str(c).lower().startswith("processed")]
@@ -278,27 +191,16 @@ def try_read_wasatch_file(uploaded_file, skiprows_list=None):
                 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
                 numeric_cols = [c for c in numeric_cols if str(c) != str(wl_col)]
                 spec_col = numeric_cols[-1] if numeric_cols else None
-
-            _dbg(f"[try_read_wasatch_file] wl_col={wl_col}, spec_col={spec_col}")
             if wl_col is None or spec_col is None:
                 continue
 
-            # サンプルの数値化で NaN 率をみる
             wl_s = pd.to_numeric(df[wl_col], errors="coerce")
             sp_s = pd.to_numeric(df[spec_col], errors="coerce")
-            nan_wl = int(wl_s.isna().sum())
-            nan_sp = int(sp_s.isna().sum())
-            _dbg(f"[try_read_wasatch_file] NaN: wavelength={nan_wl}, spectra={nan_sp}")
-
             if wl_s.notna().sum() >= 5 and sp_s.notna().sum() >= 5:
                 out = pd.DataFrame({"Wavelength": wl_s, "Processed": sp_s})
-                _dbg("[try_read_wasatch_file] SUCCESS")
                 return out, skiprows
-        except Exception as e:
-            _dbg(f"[try_read_wasatch_file] exception: {repr(e)}")
+        except Exception:
             continue
-
-    _dbg("[try_read_wasatch_file] FAILED all candidates")
     return None, None
 
 
@@ -318,14 +220,9 @@ def process_spectrum_file(
     """
     スペクトルファイルを処理（切り出し・スパイク処理・ベースライン除去）
     戻り値: (wavenum, spectra, BSremoval_spectra_pos, Averemoval_spectra_pos, file_type, original_file_name)
-
-    備考:
-    - dssn_th: ALSの平滑化強度（λ）として解釈（>0 を推奨）
-    - p=0.01, niter=10 は内部固定
     """
     original_file_name = get_file_name(uploaded_file, file_name)
     file_extension = original_file_name.split('.')[-1].lower() if '.' in original_file_name else ''
-    _dbg(f"\n=== process_spectrum_file: '{original_file_name}' ===")
 
     if uploaded_file is None:
         return None, None, None, None, None, original_file_name
@@ -353,13 +250,10 @@ def process_spectrum_file(
     # 一次読込
     data = read_csv_file(uploaded_file, file_extension)
     if data is None:
-        _dbg("[process] read_csv_file -> None")
         return None, None, None, None, None, original_file_name
 
     # タイプ判定
     file_type = detect_file_type(data)
-    _dbg(f"[process] detected file_type='{file_type}'")
-
     safe_seek(uploaded_file)
     if file_type == "unknown":
         return None, None, None, None, None, original_file_name
@@ -367,43 +261,32 @@ def process_spectrum_file(
     try:
         # ===== フォーマット別読み出し =====
         if file_type == "wasatch":
-            # Wasatch: ヘッダが長いのでまずはスキップ行を探索して本体データを読む
-            data2, used_skip = try_read_wasatch_file(uploaded_file)
+            data2, _used_skip = try_read_wasatch_file(uploaded_file)
             if data2 is None:
-                _dbg("[process][wasatch] try_read_wasatch_file -> None")
                 return None, None, None, None, None, original_file_name
-    
-            # 発振波長（nm）は既知固定でOK（必要ならヘッダから取得に拡張）
-            lambda_ex = 785.0
-    
-            # 波長→ラマンシフト(cm^-1)
+
+            lambda_ex = 785.0  # nm（必要に応じて拡張）
             pre_wavelength = pd.to_numeric(data2["Wavelength"], errors="coerce").to_numpy(dtype=float)
             valid = np.isfinite(pre_wavelength)
             if valid.sum() < 5:
-                _dbg("[process][wasatch] not enough valid wavelength values")
                 return None, None, None, None, None, original_file_name
-    
+
             pre_wavelength = pre_wavelength[valid]
             wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
-    
-            # スペクトル列
+
             if "Processed" in data2.columns:
                 pre_spectra_full = pd.to_numeric(data2["Processed"], errors="coerce").to_numpy(dtype=float)[valid]
             else:
-                # 数値列の最後をスペクトルとみなすフォールバック
                 numeric_cols = data2.select_dtypes(include=[np.number]).columns.tolist()
                 numeric_cols = [c for c in numeric_cols if c != "Wavelength"]
                 if not numeric_cols:
-                    _dbg("[process][wasatch] no numeric spectrum-like column")
                     return None, None, None, None, None, original_file_name
                 pre_spectra_full = pd.to_numeric(data2[numeric_cols[-1]], errors="coerce").to_numpy(dtype=float)[valid]
-    
-            # 昇順に統一
+
             if wavenum_full[0] > wavenum_full[-1]:
                 wavenum_full = wavenum_full[::-1]
                 pre_spectra_full = pre_spectra_full[::-1]
-    
-            # ===== 以降は全フォーマット共通の切り出し・前処理 =====
+
             pre_wavenum = wavenum_full
             pre_spectra = pre_spectra_full
 
@@ -416,109 +299,4 @@ def process_spectrum_file(
             pre_wavenum = df_t.index.to_numpy(dtype=float)
             pre_spectra = df_t["intensity"].to_numpy(dtype=float)
 
-        elif file_type == "ramaneye_old":
-            pre_wavenum = np.array(data["WaveNumber"].values, dtype=float)
-            pre_spectra = np.array(data.iloc[:, -1].values, dtype=float)
-
-        elif file_type == "ramaneye_new":
-            # ヘッダ行（WaveNumber を含む行）を動的探索し header=その行で再読込
-            sep = ',' if file_extension == 'csv' else '\t'
-            safe_seek(uploaded_file)
-            text = uploaded_file.read()
-            safe_seek(uploaded_file)
-            lines = text.splitlines()
-
-            header_idx = None
-            for i, line in enumerate(lines[:200]):
-                cols = line.split(sep)
-                if any(c.strip() == "WaveNumber" for c in cols):
-                    header_idx = i
-                    break
-
-            if header_idx is None:
-                # フォールバック（既知の既定行）
-                safe_seek(uploaded_file)
-                data2 = pd.read_csv(uploaded_file, sep=sep, header=9, engine="python")
-            else:
-                safe_seek(uploaded_file)
-                data2 = pd.read_csv(uploaded_file, sep=sep, header=header_idx, engine="python")
-
-            if "WaveNumber" not in data2.columns:
-                return None, None, None, None, None, original_file_name
-
-            pre_wavenum = np.array(data2["WaveNumber"].values, dtype=float)
-            pre_spectra = np.array(data2.iloc[:, -1].values, dtype=float)
-
-        elif file_type == "eagle":
-            data_t = data.transpose()
-            header = data_t.iloc[:3]
-            reversed_data = data_t.iloc[3:].iloc[::-1]
-            data_t = pd.concat([header, reversed_data], ignore_index=True)
-            pre_wavenum = np.array(data_t.iloc[3:, 0], dtype=float)
-            pre_spectra = np.array(data_t.iloc[3:, 1], dtype=float)
-
-        else:
-            return None, None, None, None, None, original_file_name
-
-        # 空チェック
-        if pre_wavenum.size == 0 or pre_spectra.size == 0:
-            return None, None, None, None, None, original_file_name
-
-        # 降順なら反転して昇順へ
-        if pre_wavenum.size > 1 and pre_wavenum[0] >= pre_wavenum[1]:
-            pre_wavenum = pre_wavenum[::-1]
-            pre_spectra = pre_spectra[::-1]
-
-        # ===== 範囲切り出し =====
-        start_index = find_index(pre_wavenum, start_wavenum)
-        end_index   = find_index(pre_wavenum, end_wavenum)
-        if end_index < start_index:
-            start_index, end_index = end_index, start_index
-
-        wavenum = np.array(pre_wavenum[start_index:end_index+1], dtype=float)
-        spectra = np.array(pre_spectra[start_index:end_index+1], dtype=float)
-
-        # ===== スパイク除去 → 移動平均（medfilt） =====
-        spectra_spikerm = remove_outliers_and_interpolate(spectra)
-        mveAve_spectra  = signal.medfilt(spectra_spikerm, savgol_wsize)
-
-        # ===== ベースライン推定（ALS、必要なら事前に最小値を1へ） =====
-        if prelift_to_one:
-            mveAve_spectra, offset = lift_min_to_one(mveAve_spectra)
-            spectra_spikerm = spectra_spikerm + offset
-
-        # dssn_th を ALS の λ として利用（p=0.01, niter=10 は内部固定）
-        baseline = asymmetric_least_squares(mveAve_spectra, lam=dssn_th*100000000000, p=0.1, niter=10, differences=2)
-
-        # ===== ベースライン除去（負値を持ち上げた版も用意） =====
-        BSremoval_spectra     = spectra_spikerm - baseline
-        BSremoval_spectra_pos = BSremoval_spectra + abs(np.minimum(BSremoval_spectra, 0))
-
-        Averemoval_spectra     = mveAve_spectra - baseline
-        Averemoval_spectra_pos = Averemoval_spectra + abs(np.minimum(Averemoval_spectra, 0))
-
-        return wavenum, spectra, BSremoval_spectra_pos, Averemoval_spectra_pos, file_type, original_file_name
-
-    except Exception:
-        return None, None, None, None, None, original_file_name
-
-
-def process_spectrum_file_from_path(
-    file_path: str,
-    start_wavenum,
-    end_wavenum,
-    dssn_th,
-    savgol_wsize,
-    prelift_to_one: bool = True,
-):
-    """ファイルパス→bytes→共通処理に回すラッパー"""
-    try:
-        p = Path(file_path)
-        with open(p, 'rb') as f:
-            data = f.read()
-        return process_spectrum_file(
-            data, start_wavenum, end_wavenum, dssn_th, savgol_wsize,
-            prelift_to_one=prelift_to_one, file_name=p.name
-        )
-    except Exception:
-        return None, None, None, None, None, None
+        elif

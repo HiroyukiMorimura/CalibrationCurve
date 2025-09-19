@@ -368,62 +368,45 @@ def process_spectrum_file(
     try:
         # ===== フォーマット別読み出し =====
         if file_type == "wasatch":
-            # --- 本体データ（従来通り） ---
-            try:
-                uploaded_file.seek(0)
-                try:
-                    df = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=46)
-                except Exception:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, skiprows=46)
-            except Exception:
-                return None
-        
-            lambda_ex = 785
-            pre_wavelength = np.array(df["Wavelength"].values)
-            wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
-        
-            processed_cols = [c for c in df.columns if str(c).startswith("Processed")]
-            if len(processed_cols) == 0:
-                return None
-            spectra_full = df[processed_cols].to_numpy()   # (N_wavenum, N_time)
-        
-            # --- 29行目の Timestamp を読む ---
-            uploaded_file.seek(0)
-            lines = uploaded_file.read().splitlines()
-            if len(lines) <= 28:
-                return None
-            timestamp_line = lines[28]   # 29行目
-        
-            sep = ',' if (',' in timestamp_line and '\t' not in timestamp_line) else '\t'
-            tokens = [c.strip() for c in timestamp_line.split(sep) if c.strip() != '']
-            if tokens[0] != "Timestamp":
-                return None
-            time_tokens = tokens[1:]
-        
-            def _time_str_to_seconds(t: str) -> float:
-                t = t.replace(',', '.')
-                m = re.match(r'^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$', t)
-                if not m:
-                    return float('nan')
-                return int(m.group(1)) * 60.0 + float(m.group(2))
-        
-            base_idx = 3 if len(time_tokens) > 3 else 0
-            times_all = [_time_str_to_seconds(x) for x in time_tokens]
-            base_sec = times_all[base_idx]
-            time_seconds = [ts - base_sec if pd.notna(ts) else np.nan for ts in times_all]
-        
-            # --- 波数昇順に ---
-            if wavenum_full[0] > wavenum_full[-1]:
-                wavenum_full = wavenum_full[::-1]
-                spectra_full = spectra_full[::-1, :]
-        
-            s = find_index(wavenum_full, proc_start)
-            e = find_index(wavenum_full, proc_end)
-            wn = np.array(wavenum_full[s:e+1])
-            mat = np.array(spectra_full[s:e+1, :])
-        
-            return file_name, wn, mat, time_seconds
+        # Wasatch: ヘッダが長いのでまずはスキップ行を探索して本体データを読む
+        data2, used_skip = try_read_wasatch_file(uploaded_file)
+        if data2 is None:
+            _dbg("[process][wasatch] try_read_wasatch_file -> None")
+            return None, None, None, None, None, original_file_name
+
+        # 発振波長（nm）は既知固定でOK（必要ならヘッダから取得に拡張）
+        lambda_ex = 785.0
+
+        # 波長→ラマンシフト(cm^-1)
+        pre_wavelength = pd.to_numeric(data2["Wavelength"], errors="coerce").to_numpy(dtype=float)
+        valid = np.isfinite(pre_wavelength)
+        if valid.sum() < 5:
+            _dbg("[process][wasatch] not enough valid wavelength values")
+            return None, None, None, None, None, original_file_name
+
+        pre_wavelength = pre_wavelength[valid]
+        wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
+
+        # スペクトル列
+        if "Processed" in data2.columns:
+            pre_spectra_full = pd.to_numeric(data2["Processed"], errors="coerce").to_numpy(dtype=float)[valid]
+        else:
+            # 数値列の最後をスペクトルとみなすフォールバック
+            numeric_cols = data2.select_dtypes(include=[np.number]).columns.tolist()
+            numeric_cols = [c for c in numeric_cols if c != "Wavelength"]
+            if not numeric_cols:
+                _dbg("[process][wasatch] no numeric spectrum-like column")
+                return None, None, None, None, None, original_file_name
+            pre_spectra_full = pd.to_numeric(data2[numeric_cols[-1]], errors="coerce").to_numpy(dtype=float)[valid]
+
+        # 昇順に統一
+        if wavenum_full[0] > wavenum_full[-1]:
+            wavenum_full = wavenum_full[::-1]
+            pre_spectra_full = pre_spectra_full[::-1]
+
+        # ===== 以降は全フォーマット共通の切り出し・前処理 =====
+        pre_wavenum = wavenum_full
+        pre_spectra = pre_spectra_full
 
         elif file_type == "ramaneye_old_old":
             data_wo_ts = data.drop("Timestamp", axis=1) if "Timestamp" in data.columns else data

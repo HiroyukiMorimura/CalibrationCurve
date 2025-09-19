@@ -244,7 +244,14 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                 num_rows="fixed",
                 column_config={
                     "ファイル名": st.column_config.TextColumn(disabled=True),
-                    "濃度": st.column_config.NumberColumn("濃度", help="各サンプルの濃度を入力してください", min_value=0.0, step=0.1, format="%.3f"),
+                    # ここを修正
+                    "濃度": st.column_config.NumberColumn(
+                        "濃度",
+                        help="各サンプルの濃度を入力してください",
+                        min_value=0.0,
+                        step=0.0001,
+                        format="%.4f",
+                    ),
                     "単位": st.column_config.TextColumn("単位", help="濃度の単位を入力してください"),
                 },
                 key=f"concentration_editor_{len(processed_files)}",

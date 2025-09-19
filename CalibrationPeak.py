@@ -732,7 +732,7 @@ def time_series_tab():
         csv_h = io.StringIO()
         df_h.to_csv(csv_h, index=False)
         st.download_button(
-            label="CSVをダウンロード（範囲①・②の強度 時系列）",
+            label="CSVダウンロード（①・②の強度）",
             data=csv_h.getvalue(),
             file_name=f"{file_name}_timeseries_heights.csv",
             mime="text/csv",
@@ -752,7 +752,7 @@ def time_series_tab():
         csv_r = io.StringIO()
         df_r.to_csv(csv_r, index=False)
         st.download_button(
-            label="CSVをダウンロード（ピーク比 時系列）",
+            label="CSVダウンロード（ピーク比）",
             data=csv_r.getvalue(),
             file_name=f"{file_name}_timeseries_ratio.csv",
             mime="text/csv",
@@ -778,7 +778,7 @@ def time_series_tab():
         csv_c = io.StringIO()
         df_c.to_csv(csv_c, index=False)
         st.download_button(
-            label="CSVをダウンロード（濃度換算 時系列）",
+            label="CSVダウンロード（濃度換算）",
             data=csv_c.getvalue(),
             file_name=f"{file_name}_timeseries_concentration.csv",
             mime="text/csv",

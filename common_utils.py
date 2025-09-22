@@ -6,6 +6,7 @@
 from pathlib import Path
 from typing import Optional, Tuple
 import io
+import re
 
 import numpy as np
 import pandas as pd

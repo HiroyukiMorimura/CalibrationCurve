@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import io
 import os
-import re
 
 # ページ設定：最初に呼び出す
 st.set_page_config(layout="wide", initial_sidebar_state='expanded')
@@ -208,6 +207,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
         processed_files = analyzer.process_spectra_files(
             uploaded_files, start_wavenum, end_wavenum, dssn_th, savgol_wsize
         )
+        
         with st.expander("🔧 29行目(D列〜)の時間（相対秒）デバッグ表示", expanded=False):
             for uf in uploaded_files:
                 secs = extract_wasatch_time(uf)
@@ -215,6 +215,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
                     st.write(f"{uf.name}: 時間を取得できませんでした。")
                 else:
                     st.write(f"{uf.name}: 先頭10件 -> {secs[:10]} ... (全{len(secs)}点)")
+                    
         if processed_files:
             # スペクトル表示（データ処理範囲）
             st.subheader("スペクトル確認")

@@ -615,21 +615,41 @@ def time_series_tab():
         data = read_csv_file(uploaded_file, ext)
         file_type = detect_file_type(data)
         uploaded_file.seek(0)
-
+    
         if file_type == "wasatch":
+            # 本体データ
             try:
-                df = pd.read_csv(uploaded_file, encoding='shift_jis', skiprows=46)
+                df = pd.read_csv(uploaded_file, encoding='shift-jis', skiprows=46)
             except Exception:
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, skiprows=46)
+    
+            # 29行目D列〜の時間（相対秒）を取得
+            # ※ extract_wasatch_time は内部で safe_seek するので、この後の処理に影響しません
+            secs = extract_wasatch_time(uploaded_file)  # ← ここがポイント
+    
             lambda_ex = 785
-            pre_wavelength = np.array(df["Wavelength"].values)
+            pre_wavelength = np.array(df["Wavelength"].values, dtype=float)
             wavenum_full = (1e7 / lambda_ex) - (1e7 / pre_wavelength)
+    
             processed_cols = [c for c in df.columns if str(c).startswith("Processed")]
             if len(processed_cols) == 0:
                 return None
             spectra_full = df[processed_cols].to_numpy()
-            labels = processed_cols
+    
+            # 時間軸の整合性チェック
+            if secs is not None and len(secs) == spectra_full.shape[1]:
+                time_axis = secs
+            else:
+                # 長さが合わない/取得できなかった場合はフォールバック
+                time_axis = list(range(spectra_full.shape[1]))
+                if secs is None:
+                    st.warning(f"{file_name}: 29行目の時間が取得できなかったため、列番号を時間として表示します。")
+                else:
+                    st.warning(
+                        f"{file_name}: 時間点数({len(secs)}) と列数({spectra_full.shape[1]}) が一致しないため、列番号を時間として表示します。"
+                    )
+    
         elif file_type in ("ramaneye_old", "ramaneye_new"):
             if file_type == "ramaneye_new":
                 df = pd.read_csv(uploaded_file, skiprows=9)
@@ -641,19 +661,22 @@ def time_series_tab():
             if len(cols) == 0:
                 cols = [df.columns[-1]]
             spectra_full = df[cols].to_numpy()
-            labels = [str(c) for c in cols]
+            time_axis = [str(c) for c in cols]  # 既定のまま
+    
         else:
             return None
-
+    
+        # 昇順に統一
         if wavenum_full[0] > wavenum_full[-1]:
             wavenum_full = wavenum_full[::-1]
             spectra_full = spectra_full[::-1, :]
-
+    
+        # 処理範囲へ切り出し
         s = find_index(wavenum_full, proc_start)
         e = find_index(wavenum_full, proc_end)
         wn = np.array(wavenum_full[s:e+1])
         mat = np.array(spectra_full[s:e+1, :])  # 形状: (N_wavenum, N_time)
-        return file_name, wn, mat, labels
+        return file_name, wn, mat, time_axis
 
     for up in uploaded_files:
         parsed = parse_timeseries(up)

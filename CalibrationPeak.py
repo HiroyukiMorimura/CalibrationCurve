@@ -209,7 +209,7 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
         )
         with st.expander("🔧 29行目(D列〜)の時間（相対秒）デバッグ表示", expanded=False):
             for uf in uploaded_files:
-                secs = extract_wasatch_time_line29(uf)
+                secs = extract_wasatch_time(uf)
                 if secs is None:
                     st.write(f"{uf.name}: 時間を取得できませんでした。")
                 else:

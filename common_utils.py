@@ -13,6 +13,61 @@ import scipy.signal as signal
 from scipy.sparse.linalg import spsolve
 from scipy.sparse import csc_matrix, eye, diags
 
+def extract_wasatch_time(uploaded_file):
+    """
+    WasatchのCSVで、29行目(1始まり)の D 列から末尾までを時間として取り出し、
+    先頭の有限値を 0 秒にそろえた相対秒のリストを返す。
+    - 区切りは行内のカンマ数とタブ数を比較して決定（カンマ優先）
+    - mm:ss(.sss) / 秒(小数可) / 小数点カンマ(, -> .) を許容
+    取得失敗時は None を返す
+    """
+    def _time_to_sec(t: str) -> float:
+        t = str(t).strip()
+        if t == "" or t.lower() in ("nan", "none"):
+            return float("nan")
+        t = t.replace(",", ".")
+        m = re.match(r"^(\d{1,2}):(\d{1,2}(?:\.\d+)?)$", t)  # mm:ss(.sss)
+        if m:
+            return int(m.group(1)) * 60.0 + float(m.group(2))
+        # 純粋な秒（小数可）
+        m2 = re.match(r"^\d+(?:\.\d+)?$", t)
+        if m2:
+            return float(t)
+        return float("nan")
+
+    try:
+        safe_seek(uploaded_file)
+        text = uploaded_file.read()
+        if isinstance(text, bytes):
+            try:
+                text = text.decode("utf-8")
+            except UnicodeDecodeError:
+                text = text.decode("shift-jis", errors="ignore")
+
+        lines = text.splitlines()
+        if len(lines) <= 28:
+            return None
+
+        line29 = lines[28]
+        # 区切り推定（カンマ優先）
+        sep = "," if line29.count(",") >= line29.count("\t") else "\t"
+        cols = [c.strip() for c in line29.split(sep)]
+
+        # D列(=index 3)から末尾
+        if len(cols) <= 3:
+            return None
+        tokens = [c for c in cols[3:] if c.strip() != ""]
+
+        secs = [_time_to_sec(x) for x in tokens]
+        # 先頭の有限値を 0 秒起点に
+        base = next((v for v in secs if np.isfinite(v)), None)
+        if base is None:
+            return None
+        secs = [(v - base) if np.isfinite(v) else np.nan for v in secs]
+        return secs
+    finally:
+        safe_seek(uploaded_file)
+            
 # =============================================================================
 # 基本ヘルパー
 # =============================================================================

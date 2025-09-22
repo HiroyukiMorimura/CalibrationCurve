@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import io
 import os
+import re
 
 # ページ設定：最初に呼び出す
 st.set_page_config(layout="wide", initial_sidebar_state='expanded')

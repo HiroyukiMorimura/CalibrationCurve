@@ -17,7 +17,7 @@ st.sidebar.markdown("### 設定")
 
 # 共通ユーティリティ関数（デバッグ関連のimportは削除）
 from common_utils import (
-    detect_file_type, read_csv_file, find_index,
+    detect_file_type, read_csv_file, find_index, extract_wasatch_time,
     asymmetric_least_squares, remove_outliers_and_interpolate, process_spectrum_file
 )
 
@@ -207,7 +207,13 @@ def calibration_creation_tab(analyzer: CalibrationAnalyzer):
         processed_files = analyzer.process_spectra_files(
             uploaded_files, start_wavenum, end_wavenum, dssn_th, savgol_wsize
         )
-
+        with st.expander("🔧 29行目(D列〜)の時間（相対秒）デバッグ表示", expanded=False):
+            for uf in uploaded_files:
+                secs = extract_wasatch_time_line29(uf)
+                if secs is None:
+                    st.write(f"{uf.name}: 時間を取得できませんでした。")
+                else:
+                    st.write(f"{uf.name}: 先頭10件 -> {secs[:10]} ... (全{len(secs)}点)")
         if processed_files:
             # スペクトル表示（データ処理範囲）
             st.subheader("スペクトル確認")
